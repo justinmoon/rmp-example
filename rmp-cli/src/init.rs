@@ -266,6 +266,16 @@ pub fn init(
         )?;
     }
 
+    // ── Xcode wrapper scripts (macOS) ─────────────────────────────────
+    if include_ios || include_iced {
+        let tools_dir = dest.join("tools");
+        std::fs::create_dir_all(&tools_dir)
+            .map_err(|e| CliError::operational(format!("create tools/: {e}")))?;
+        write_executable(&tools_dir.join("xcode-dev-dir"), &tpl_xcode_dev_dir())?;
+        write_executable(&tools_dir.join("xcode-run"), &tpl_xcode_run())?;
+        write_executable(&tools_dir.join("cargo-with-xcode"), &tpl_cargo_with_xcode())?;
+    }
+
     if include_git {
         init_git_repo(&dest)?;
     }
@@ -349,6 +359,16 @@ fn write_text(path: &Path, content: &str) -> Result<(), CliError> {
     }
     std::fs::write(path, content)
         .map_err(|e| CliError::operational(format!("failed to write {}: {e}", path.display())))?;
+    Ok(())
+}
+
+fn write_executable(path: &Path, content: &str) -> Result<(), CliError> {
+    write_text(path, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+    }
     Ok(())
 }
 
@@ -583,7 +603,7 @@ doctor:
 
 # Build Rust core for the host (needed for uniffi-bindgen).
 rust-build-host:
-  cargo build -p {{CORE_CRATE}} --release
+  ./tools/cargo-with-xcode build -p {{CORE_CRATE}} --release
 
 bindings:
   rmp bindings all
@@ -595,27 +615,31 @@ bindings:
             r#"
 # ── iOS ──────────────────────────────────────────────────────────────────────
 
-XCODE_DEV := "/Applications/Xcode.app/Contents/Developer"
-TOOLCHAIN_BIN := XCODE_DEV / "Toolchains/XcodeDefault.xctoolchain/usr/bin"
-
 run-ios:
   rmp run ios
 
 ios-gen-swift: rust-build-host
-  rmp bindings swift
+  cargo run -p uniffi-bindgen -- generate \
+    --library target/release/lib{{LIB_NAME}}.dylib \
+    --language swift \
+    --out-dir ios/Bindings \
+    --config rust/uniffi.toml
 
 # Cross-compile Rust for iOS device and simulator (arm64).
 ios-rust:
   #!/usr/bin/env bash
   set -e
-  IOS_SDK="{{XCODE_DEV}}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
-  SIM_SDK="{{XCODE_DEV}}/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
+  DEV_DIR="$(./tools/xcode-dev-dir)"
+  TOOLCHAIN_BIN="$DEV_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+  IOS_SDK="$DEV_DIR/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+  SIM_SDK="$DEV_DIR/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
   for pair in "aarch64-apple-ios $IOS_SDK -miphoneos-version-min=17.0" \
               "aarch64-apple-ios-sim $SIM_SDK -mios-simulator-version-min=17.0"; do
     set -- $pair; TARGET=$1; SDK=$2; VFLAG=$3
-    env -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET -u CC -u CXX -u AR -u RANLIB -u LIBRARY_PATH \
-      DEVELOPER_DIR="{{XCODE_DEV}}" SDKROOT="$SDK" CC="{{TOOLCHAIN_BIN}}/clang" \
-      RUSTFLAGS="-C linker={{TOOLCHAIN_BIN}}/clang -C link-arg=$VFLAG -C link-arg=-isysroot -C link-arg=$SDK" \
+    env -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET -u CC -u CXX -u AR -u RANLIB \
+      -u LIBRARY_PATH -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE \
+      DEVELOPER_DIR="$DEV_DIR" SDKROOT="$SDK" CC="$TOOLCHAIN_BIN/clang" \
+      RUSTFLAGS="-C linker=$TOOLCHAIN_BIN/clang -C link-arg=$VFLAG -C link-arg=-isysroot -C link-arg=$SDK" \
       cargo build -p {{CORE_CRATE}} --lib --target "$TARGET" --release
   done
 
@@ -627,7 +651,7 @@ ios-xcframework:
   mkdir -p staging/headers
   cp ios/Bindings/{{LIB_NAME}}FFI.h staging/headers/
   cp ios/Bindings/{{LIB_NAME}}FFI.modulemap staging/headers/module.modulemap
-  xcodebuild -create-xcframework \
+  ./tools/xcode-run xcodebuild -create-xcframework \
     -library target/aarch64-apple-ios/release/lib{{LIB_NAME}}.a -headers staging/headers \
     -library target/aarch64-apple-ios-sim/release/lib{{LIB_NAME}}.a -headers staging/headers \
     -output ios/Frameworks/{{XCF_NAME}}.xcframework
@@ -636,17 +660,12 @@ ios-xcframework:
 ios-xcodeproj:
   cd ios && xcodegen generate
 
-# Build the iOS app for simulator (run outside Nix shell if linking fails).
+# Build the iOS app for simulator.
 ios-build:
-  #!/usr/bin/env bash
-  set -e
-  env -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET \
-    -u CC -u CXX -u AR -u RANLIB -u LIBRARY_PATH \
-    DEVELOPER_DIR="{{XCODE_DEV}}" \
-    xcodebuild build \
-      -project ios/App.xcodeproj -scheme App \
-      -destination "generic/platform=iOS Simulator" \
-      -configuration Debug CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+  ./tools/xcode-run xcodebuild build \
+    -project ios/App.xcodeproj -scheme App \
+    -destination "generic/platform=iOS Simulator" \
+    -configuration Debug CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
 
 # Full iOS pipeline: host build → bindings → cross-compile → xcframework → xcodegen → build.
 ios-full: ios-gen-swift ios-rust ios-xcframework ios-xcodeproj ios-build
@@ -663,7 +682,12 @@ run-android:
   rmp run android
 
 gen-kotlin: rust-build-host
-  rmp bindings kotlin
+  cargo run -p uniffi-bindgen -- generate \
+    --library target/release/lib{{LIB_NAME}}.dylib \
+    --language kotlin \
+    --out-dir android/app/src/main/java \
+    --no-format \
+    --config rust/uniffi.toml
 
 # Cross-compile Rust for Android ABIs.
 android-rust:
@@ -686,7 +710,7 @@ android-full: gen-kotlin android-rust android-assemble
 # ── Desktop (iced) ───────────────────────────────────────────────────────────
 
 run-iced:
-  cargo run -p {{ICED_PACKAGE}}
+  ./tools/cargo-with-xcode run -p {{ICED_PACKAGE}}
 "#,
         );
     }
@@ -1889,6 +1913,65 @@ exec gradle "$@"
         let _ = std::fs::set_permissions(&gradlew, std::fs::Permissions::from_mode(0o755));
     }
     Ok(())
+}
+
+// ── Xcode wrapper script templates ──────────────────────────────────────────
+
+fn tpl_xcode_dev_dir() -> String {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+
+is_valid_dev_dir() {
+  local dir="${1:-}"
+  [ -n "$dir" ] \
+    && [ -x "$dir/usr/bin/simctl" ] \
+    && [ -x "$dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" ]
+}
+
+# 1) Respect DEVELOPER_DIR if set (flake pins this)
+if is_valid_dev_dir "${DEVELOPER_DIR:-}"; then echo "$DEVELOPER_DIR"; exit 0; fi
+# 2) Respect xcode-select
+SELECTED="$(xcode-select -p 2>/dev/null || true)"
+if is_valid_dev_dir "$SELECTED"; then echo "$SELECTED"; exit 0; fi
+# 3) Fallback to latest /Applications/Xcode*.app
+LATEST="$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | sort -V | tail -n 1 || true)"
+if is_valid_dev_dir "$LATEST"; then echo "$LATEST"; exit 0; fi
+
+echo "error: no Xcode install found with simctl + clang" >&2; exit 1
+"#
+    .to_string()
+}
+
+fn tpl_xcode_run() -> String {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+DEV_DIR="$("$(dirname "$0")/xcode-dev-dir")"
+exec env -u LD -u CC -u CXX -u AR -u RANLIB \
+  -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET \
+  -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE \
+  -u LIBRARY_PATH \
+  DEVELOPER_DIR="$DEV_DIR" "$@"
+"#
+    .to_string()
+}
+
+fn tpl_cargo_with_xcode() -> String {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+[ "$(uname -s)" != "Darwin" ] && exec cargo "$@"
+
+DEV_DIR="$("$(dirname "$0")/xcode-dev-dir")"
+TOOLCHAIN_BIN="$DEV_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+exec env \
+  -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET -u IPHONEOS_DEPLOYMENT_TARGET \
+  -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE \
+  -u LIBRARY_PATH \
+  DEVELOPER_DIR="$DEV_DIR" \
+  CC="$TOOLCHAIN_BIN/clang" CXX="$TOOLCHAIN_BIN/clang++" \
+  AR="$TOOLCHAIN_BIN/ar" RANLIB="$TOOLCHAIN_BIN/ranlib" \
+  cargo "$@"
+"#
+    .to_string()
 }
 
 /// Convert a snake_case lib name to PascalCase (e.g., "my_app_core" → "MyAppCore").

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+is_valid_dev_dir() {
+  local dir="${1:-}"
+  [ -n "$dir" ] \
+    && [ -x "$dir/usr/bin/simctl" ] \
+    && [ -x "$dir/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" ]
+}
+
+# 1) Respect DEVELOPER_DIR if set (flake pins this)
+if is_valid_dev_dir "${DEVELOPER_DIR:-}"; then echo "$DEVELOPER_DIR"; exit 0; fi
+# 2) Respect xcode-select
+SELECTED="$(xcode-select -p 2>/dev/null || true)"
+if is_valid_dev_dir "$SELECTED"; then echo "$SELECTED"; exit 0; fi
+# 3) Fallback to latest /Applications/Xcode*.app
+LATEST="$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | sort -V | tail -n 1 || true)"
+if is_valid_dev_dir "$LATEST"; then echo "$LATEST"; exit 0; fi
+
+echo "error: no Xcode install found with simctl + clang" >&2; exit 1

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DEV_DIR="$("$(dirname "$0")/xcode-dev-dir")"
+exec env -u LD -u CC -u CXX -u AR -u RANLIB \
+  -u SDKROOT -u MACOSX_DEPLOYMENT_TARGET \
+  -u NIX_LDFLAGS -u NIX_CFLAGS_COMPILE \
+  -u LIBRARY_PATH \
+  DEVELOPER_DIR="$DEV_DIR" "$@"

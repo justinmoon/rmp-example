@@ -1566,14 +1566,14 @@ The iOS build has five stages:
 
 **1. Build for host** (`rust-build-host`)
 ```bash
-cargo build -p my_core --release  # produces libmy_core.dylib on macOS
+cargo build -p my_core --release  # produces libmy_core.dylib on macOS, libmy_core.so on Linux
 ```
 The host build is needed because `uniffi-bindgen` reads type metadata from the compiled library.
 
 **2. Generate Swift bindings** (`ios-gen-swift`)
 ```bash
 cargo run -p uniffi-bindgen -- generate \
-  --library target/release/libmy_core.dylib \
+  --library target/release/libmy_core.dylib \  # .so on Linux
   --language swift \
   --out-dir ios/Bindings \
   --config rust/uniffi.toml

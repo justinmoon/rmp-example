@@ -590,7 +590,8 @@ fn tpl_justfile(
          CORE_CRATE := \"{crate_name}\"\n\
          LIB_NAME := \"{lib_name}\"\n\
          XCF_NAME := \"{xcf_name}\"\n\
-         ICED_PACKAGE := \"{iced_package}\"\n",
+         ICED_PACKAGE := \"{iced_package}\"\n\
+         DYLIB_EXT := if os() == \"macos\" {{ \"dylib\" }} else {{ \"so\" }}\n",
     );
     let mut out = header;
     out.push_str(
@@ -620,7 +621,7 @@ run-ios:
 
 ios-gen-swift: rust-build-host
   cargo run -p uniffi-bindgen -- generate \
-    --library target/release/lib{{LIB_NAME}}.dylib \
+    --library target/release/lib{{LIB_NAME}}.{{DYLIB_EXT}} \
     --language swift \
     --out-dir ios/Bindings \
     --config rust/uniffi.toml
@@ -683,7 +684,7 @@ run-android:
 
 gen-kotlin: rust-build-host
   cargo run -p uniffi-bindgen -- generate \
-    --library target/release/lib{{LIB_NAME}}.dylib \
+    --library target/release/lib{{LIB_NAME}}.{{DYLIB_EXT}} \
     --language kotlin \
     --out-dir android/app/src/main/java \
     --no-format \

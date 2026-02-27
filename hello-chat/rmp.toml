@@ -1,0 +1,19 @@
+[project]
+name = "hello-chat"
+org = "com.example"
+
+[core]
+crate = "hello-chat_core"
+bindings = "uniffi"
+
+[ios]
+bundle_id = "com.example.hellochat"
+
+[android]
+app_id = "com.example.hellochat"
+
+[desktop]
+targets = ["iced"]
+
+[desktop.iced]
+package = "hello-chat_core_desktop_iced"

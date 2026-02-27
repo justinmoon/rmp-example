@@ -1,0 +1,11 @@
+[package]
+name = "hello-chat_core_desktop_iced"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+hello-chat_core = { path = "../../rust" }
+iced = "0.14"
+flume = "0.11"
+dirs-next = "2"

@@ -1,0 +1,19 @@
+set shell := ["bash", "-c"]
+
+default:
+  @just --list
+
+doctor:
+  rmp doctor
+
+bindings:
+  rmp bindings all
+
+run-ios:
+  rmp run ios
+
+run-android:
+  rmp run android
+
+run-iced:
+  rmp run iced
